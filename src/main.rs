@@ -1,4 +1,6 @@
+use actix_cors::Cors;
 use actix_web::body::BoxBody;
+use actix_web::http::header;
 use actix_web::http::header::ContentType;
 use actix_web::http::StatusCode;
 use actix_web::{
@@ -100,7 +102,13 @@ async fn main() -> std::io::Result<()> {
     });
 
     HttpServer::new(move || {
+        let cors = Cors::default()
+            .allowed_origin("http://localhost:1234")
+            .allowed_methods(vec!["GET", "POST"])
+            .allowed_header(header::CONTENT_TYPE);
+
         App::new()
+            .wrap(cors)
             .app_data(app_state.clone())
             .service(get_todos)
             // .service(check_todo)

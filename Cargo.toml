@@ -12,3 +12,4 @@ serde_json = "1.0.82"
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.21.0"
 rusqlite = { version  = "0.28.0", features = ["bundled"] }
+actix-cors = "0.6.1"
