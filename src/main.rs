@@ -4,7 +4,8 @@ use actix_web::http::header;
 use actix_web::http::header::ContentType;
 use actix_web::http::StatusCode;
 use actix_web::{
-    get, post, web, App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError, Result,
+    get, post, put, web, App, HttpRequest, HttpResponse, HttpServer, Responder, ResponseError,
+    Result,
 };
 
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,7 @@ use std::sync::Mutex;
 struct Todo {
     id: u32,
     description: String,
+    done: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -69,14 +71,71 @@ async fn get_todos(data: web::Data<AppState>) -> impl Responder {
         .body(response)
 }
 
-#[post("/todo")]
-async fn post_todo(req: web::Json<Todo>, data: web::Data<AppState>) -> impl Responder {
-    let new_todo = Todo {
-        id: req.id,
-        description: String::from(&req.description),
-    };
+#[get("/todo/{id}")]
+async fn get_todo(id: web::Path<u32>, data: web::Data<AppState>) -> Result<Todo, ErrorNoId> {
+    let todo_id: u32 = *id;
+    let todos = data.todos.lock().unwrap();
+
+    let todo: Vec<_> = todos.iter().filter(|x| x.id == todo_id).collect();
+
+    if !todo.is_empty() {
+        Ok(Todo {
+            id: todo[0].id,
+            description: String::from(&todo[0].description),
+            done: todo[0].done,
+        })
+    } else {
+        let response = ErrorNoId {
+            id: todo_id,
+            err: String::from("todo not found"),
+        };
+        Err(response)
+    }
+}
+
+#[put("/todo/{id}")]
+async fn check_todo(
+    id: web::Path<u32>,
+    data: web::Data<AppState>,
+) -> Result<HttpResponse, ErrorNoId> {
+    let todo_id: u32 = *id;
 
     let mut todos = data.todos.lock().unwrap();
+
+    let id_index = todos.iter().position(|x| x.id == todo_id);
+
+    match id_index {
+        Some(id) => {
+            let new_todo = Todo {
+                id: todo_id,
+                description: String::from(&todos[id].description),
+                done: dbg!(!&todos[id].done),
+            };
+            let response = serde_json::to_string(&new_todo).unwrap();
+            todos[id] = new_todo;
+            Ok(HttpResponse::Ok()
+                .content_type(ContentType::json())
+                .body(response))
+        }
+        None => {
+            let response = ErrorNoId {
+                id: todo_id,
+                err: String::from("todo not found"),
+            };
+            Err(response)
+        }
+    }
+}
+
+#[post("/todo")]
+async fn post_todo(req: web::Json<Todo>, data: web::Data<AppState>) -> impl Responder {
+    let mut todos = data.todos.lock().unwrap();
+
+    let new_todo = Todo {
+        id: todos.iter().map(|t| t.id).max().unwrap_or_default() + 1,
+        description: String::from(&req.description),
+        done: false,
+    };
 
     let response = serde_json::to_string(&new_todo).unwrap();
 
@@ -93,28 +152,34 @@ async fn main() -> std::io::Result<()> {
             Todo {
                 id: 1,
                 description: String::from("Faire une soupe à l'oignon"),
+                done: false,
             },
             Todo {
                 id: 2,
                 description: String::from("Payer facture electricité"),
+                done: true,
+            },
+            Todo {
+                id: 3,
+                description: String::from("Faire les courses"),
+                done: false,
             },
         ]),
     });
 
     HttpServer::new(move || {
-        let cors = Cors::default()
-            .allowed_origin("http://localhost:1234")
-            .allowed_methods(vec!["GET", "POST"])
-            .allowed_header(header::CONTENT_TYPE);
+        let cors = Cors::permissive();
+        //.allowed_origin("http://localhost:1234")
+        //.allowed_methods(vec!["GET", "POST", "OPTIONS"])
+        //.allowed_header(header::CONTENT_TYPE);
 
         App::new()
             .wrap(cors)
             .app_data(app_state.clone())
             .service(get_todos)
-            // .service(check_todo)
+            .service(get_todo)
             .service(post_todo)
-        // .service(remove)
-        // .service(remove_all)
+            .service(check_todo)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
